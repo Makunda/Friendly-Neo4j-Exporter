@@ -24,6 +24,8 @@ import org.neo4j.graphdb.*;
 import org.neo4j.logging.Log;
 
 import java.io.*;
+import java.lang.reflect.Array;
+import java.nio.file.Paths;
 import java.util.*;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -106,14 +108,20 @@ public class Exporter {
 
                 try {
                     // Create a new file writer and write headers for each relationship type
-                    FileWriter writer = new FileWriter(pathParams.concat(filename), true);
+                    FileWriter writer = new FileWriter(Paths.get(pathParams).resolve(filename).toFile(), true);
                     fileWriterMap.put(pair.getKey(), writer);
                     createdFilenameList.add(filename);
 
                     StringBuilder headers = new StringBuilder();
-                    headers.append(INDEX_OUTGOING.concat(DELIMITER)); // Add Source property
-                    headers.append(INDEX_INCOMING.concat(DELIMITER)); // Add Destination property
-                    headers.append(String.join(DELIMITER, pair.getValue())).append("\n");
+                    headers.append(INDEX_OUTGOING).append(DELIMITER); // Add Source property
+                    headers.append(INDEX_INCOMING); // Add Destination property
+
+                    final Set<String> relPropHeaders = pair.getValue();
+                    if(!relPropHeaders.isEmpty()) {
+                        headers.append(DELIMITER);
+                        headers.append(String.join(DELIMITER, pair.getValue()));
+                    }
+                    headers.append("\n");
 
                     writer.write(headers.toString());
                 } catch (IOException e) {
@@ -139,7 +147,7 @@ public class Exporter {
                 for (String prop : headers) {
                     String value = "";
                     try {
-                        value = rel.getProperty(prop).toString();
+                        value = smartString(rel.getProperty(prop));
                     } catch (NotFoundException ignored) {
                     }
                     valueList.add(value);
@@ -214,8 +222,12 @@ public class Exporter {
 
         // Create CSV string
         StringBuilder csv = new StringBuilder();
-        csv.append(INDEX_COL.concat(DELIMITER)); // Add index property
-        csv.append(String.join(DELIMITER, headers)).append("\n");
+        csv.append(INDEX_COL);
+        if(!headers.isEmpty()) {
+            csv.append(DELIMITER); // Add index property
+            csv.append(String.join(DELIMITER, headers));
+        }
+        csv.append("\n");
 
         log.info("Appending headers for label ".concat(label.name()));
 
@@ -229,7 +241,7 @@ public class Exporter {
             for (String prop : headers) {
                 String value = "";
                 try {
-                    value = n.getProperty(prop).toString();
+                    value = smartString(n.getProperty(prop));
 
                     // If a semi-colon is present in the value, sanitize the results
                     if(value.matches("[,:';\\.]")) {
@@ -257,13 +269,13 @@ public class Exporter {
      * @throws IOException
      */
     private void createZip(String targetName) throws FileIOException {
-        File f = new File(pathParams.concat(targetName));
+        File f = Paths.get(pathParams).resolve(targetName).toFile();
         log.info("Creating zip file..");
 
         try (ZipOutputStream zipOut = new ZipOutputStream(new FileOutputStream(f))) {
 
             for(String filename : createdFilenameList) {
-                File fileToZip = new File(pathParams.concat(filename));
+                File fileToZip = Paths.get(pathParams).resolve(filename).toFile();
 
                 try (FileInputStream fileStream = new FileInputStream(fileToZip)){
                     ZipEntry e = new ZipEntry(filename);
@@ -309,7 +321,7 @@ public class Exporter {
             String filename = NODE_PREFIX.concat(toTreat.name()).concat(EXTENSION);
             createdFilenameList.add(filename);
 
-            try (FileWriter writer = new FileWriter(pathParams.concat(filename), true)) {
+            try (FileWriter writer = new FileWriter(Paths.get(pathParams).resolve(filename).toFile(), true)) {
                 writer.write(content);
             } catch (Exception e) {
                 throw new FileIOException("Error : Impossible to create/open file with name ".concat(filename), e, "SAVExSAVE01");
@@ -357,6 +369,29 @@ public class Exporter {
         }
 
 
+    }
+
+    /**
+     * Smarter conversion of Java object to string (handles arrays)
+     *
+     * @param obj  Any object
+     * @return String representation of the object
+     */
+    public String smartString(Object obj) {
+        if(obj != null && obj.getClass().isArray()) {
+            final StringBuilder builder = new StringBuilder("[");
+            for(int i = 0; i < Array.getLength(obj); i++) {
+                if(i > 0) {
+                    builder.append(", ");
+                }
+                builder.append(smartString(Array.get(obj, i)));
+            }
+
+            builder.append("]");
+            return builder.toString();
+        } else {
+            return String.valueOf(obj);
+        }
     }
 
 
